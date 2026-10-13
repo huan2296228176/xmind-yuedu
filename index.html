@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 移动端视口适配；viewport-fit=cover 配合安全区留白（刘海屏） -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f6ef7">
+  <title>xmind阅读</title>
+  <!-- PWA 应用清单；favicon 用本地 SVG -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <style>
+    :root{--p:#4f6ef7;--bg:#f3f5fb;--line:#e2e6f0;--txt:#262b33;--muted:#9aa3b2}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html{-webkit-text-size-adjust:100%;text-size-adjust:100%} /* 防止 iOS 横屏自动放大文字 */
+    html,body{margin:0}
+    body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
+    /* 顶栏：标题 + 工具按钮，sticky 吸顶 */
+    header{position:sticky;top:0;z-index:9;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top));background:#fff;box-shadow:0 1px 6px rgba(30,40,90,.08)}
+    h1{font-size:17px;margin:0 auto 0 0;font-weight:700}
+    h1 small{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px}
+    .btn{border:none;border-radius:10px;padding:9px 13px;font-size:14px;cursor:pointer;background:#eef1fb;color:var(--p);font-weight:600}
+    .btn:active{transform:scale(.96)}
+    .btn.pri{background:var(--p);color:#fff}
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    main{max-width:860px;margin:0 auto;padding:12px 12px 80px}
+    /* 空状态：未打开文件时 */
+    .empty{margin-top:12vh;text-align:center;color:var(--muted)}
+    .empty img{width:72px;height:72px}
+    .empty h2{color:var(--txt);margin:12px 0 6px;font-size:20px}
+    .empty p{font-size:14px;line-height:1.8;margin:0 0 22px}
+    .empty .tip{font-size:12px;margin-top:18px}
+    /* 树状大纲 */
+    .sheet{margin-bottom:26px}
+    .sheet>h2{font-size:13px;color:var(--muted);margin:0 0 2px 2px;font-weight:600}
+    ul.tree,ul.tree ul{list-style:none;margin:0;padding:0}
+    ul.tree ul{margin-left:14px;padding-left:14px;border-left:2px solid var(--line)} /* 层级参考线 */
+    .row{display:flex;align-items:center;gap:6px;margin:6px 0;padding:6px 8px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(30,40,90,.04)}
+    .row.root{background:var(--p);border-color:var(--p);color:#fff;font-weight:600}
+    /* 折叠箭头用 CSS 画（▸▾ 在部分安卓机型字体缺字形会显示成方块） */
+    .tgl{position:relative;flex:none;width:28px;height:28px;border:none;background:transparent;color:inherit;cursor:pointer;border-radius:8px}
+    .tgl::before{content:'';position:absolute;left:50%;top:50%;width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translate(-50%,-65%) rotate(-45deg);transition:transform .15s}
+    .tgl.open::before{transform:translate(-50%,-35%) rotate(45deg)}
+    .tgl.ph{visibility:hidden} /* 无子节点时占位，保持对齐 */
+    .label{flex:1;min-height:22px;font-size:15px;line-height:1.45;word-break:break-all;cursor:text;padding:2px;border-radius:6px}
+    .row.root .label{font-size:16px}
+    .label:empty::before{content:'（空）';color:var(--muted);font-weight:400}
+    .row.root .label:empty::before{color:rgba(255,255,255,.7)}
+    .label input.edit{width:100%;font:inherit;font-size:16px;border:none;outline:2px solid var(--p);border-radius:6px;padding:1px 4px;background:#fff;color:#222} /* 16px：低于此值 iOS 聚焦输入框会强制放大页面 */
+    .ops{flex:none;display:flex;gap:5px}
+    .ops button{border:none;height:30px;padding:0 9px;border-radius:9px;background:#eef1fb;color:var(--p);font-size:13px;font-weight:600;cursor:pointer}
+    .ops button:active{transform:scale(.94)}
+    .row.root .ops button{background:rgba(255,255,255,.22);color:#fff}
+    .ops button.danger{color:#e5484d;background:#fdebec}
+    /* 底部提示条 */
+    #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:#2c3242;color:#fff;font-size:14px;padding:10px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:.25s;z-index:99;max-width:86vw}
+    #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    /* 窄屏：隐藏副标题，防止顶栏换行过高 */
+    @media (max-width:520px){h1 small{display:none}.btn{padding:9px 11px}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>xmind阅读<small>离线可用</small></h1>
+    <button class="btn" id="btnExpand" disabled>展开</button>
+    <button class="btn" id="btnCollapse" disabled>折叠</button>
+    <button class="btn" id="btnOpen">打开文件</button>
+    <button class="btn pri" id="btnExport" disabled>导出</button>
+  </header>
+
+  <main>
+    <!-- 空状态页 -->
+    <div class="empty" id="empty">
+      <img src="./icon.svg" alt="xmind阅读">
+      <h2>xmind阅读</h2>
+      <p>打开电脑或手机里的 .xmind 文件<br>阅读 · 编辑 · 导出，全程离线</p>
+      <button class="btn pri" id="btnOpen2">选择 .xmind 文件</button>
+      <p class="tip">支持 XMind Zen / 2020+（content.json）与 XMind 8（content.xml）</p>
+    </div>
+    <!-- 导图树容器（由 JS 渲染） -->
+    <div id="treeWrap" hidden></div>
+  </main>
+
+  <div id="toast"></div>
+  <!-- 隐藏的文件选择器，由按钮触发 -->
+  <input type="file" id="fileInput" accept=".xmind,application/zip" hidden>
+
+  <script src="./jszip.min.js"></script>
+  <script>
+  'use strict';
+  /* ---------- 状态 ---------- */
+  let sheets = [];           // [{title, root:{id,title,children:[]}}]
+  let fileBase = 'mindmap';  // 导出文件名（不含扩展名）
+  const collapsed = new Set(); // 已折叠节点 id
+  const index = new Map();     // id -> {node, parent}（仅当前已渲染节点）
+  const $ = id => document.getElementById(id);
+  const uid = () => crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  /* ---------- 打开文件 ---------- */
+  $('btnOpen').onclick = $('btnOpen2').onclick = () => $('fileInput').click();
+  // iOS 文件选择器不识别 .xmind 扩展名（accept 过滤会让文件变灰选不了），放开限制，打开时再校验
+  if (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
+    $('fileInput').removeAttribute('accept');
+  $('fileInput').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { await loadBuffer(await f.arrayBuffer(), f.name.replace(/\.xmind$/i, '')); }
+    catch (err) { console.error(err); toast('打开失败：请选择有效的 .xmind 文件'); }
+  });
+
+  async function loadBuffer(buf, base) {
+    const zip = await JSZip.loadAsync(buf);
+    let data = null;
+    const cj = zip.file('content.json'); // XMind Zen/2020+
+    if (cj) { try { data = fromJson(await cj.async('string')); } catch (e) {} }
+    if (!data) {
+      const cx = zip.file('content.xml'); // XMind 8 旧格式
+      if (cx) data = fromXml(await cx.async('string'));
+    }
+    if (!data || !data.length) throw new Error('未能解析导图内容（缺少 content.json / content.xml）');
+    sheets = data; fileBase = base || 'mindmap'; collapsed.clear();
+    render(); toast('已打开：' + fileBase);
+  }
+
+  /* ---------- 解析：content.json ---------- */
+  function fromJson(text) {
+    const doc = JSON.parse(text);
+    if (!Array.isArray(doc)) throw new Error('content.json 格式不符');
+    return doc.map(sh => ({ title: (sh && sh.title) || '未命名画布', root: jTopic(sh && sh.rootTopic) }));
+  }
+  function jTopic(t) {
+    const kids = t && t.children && Array.isArray(t.children.attached) ? t.children.attached : [];
+    return { id: uid(), title: (t && t.title) || '', children: kids.map(jTopic) };
+  }
+
+  /* ---------- 解析：content.xml ---------- */
+  function fromXml(text) {
+    const xml = new DOMParser().parseFromString(text, 'text/xml');
+    if (xml.getElementsByTagName('parsererror').length) throw new Error('XML 解析失败');
+    return [...xml.getElementsByTagNameNS('*', 'sheet')].map(sh => {
+      const title = sh.getElementsByTagNameNS('*', 'title')[0];
+      const topic = sh.getElementsByTagNameNS('*', 'topic')[0];
+      return { title: (title ? title.textContent : '') || '未命名画布',
+               root: topic ? xTopic(topic) : { id: uid(), title: '', children: [] } };
+    });
+  }
+  function xTopic(el) {
+    const t = el.getElementsByTagNameNS('*', 'title')[0]; // 自身 title 在文档序中最先出现
+    const ch = el.getElementsByTagNameNS('*', 'children')[0];
+    const kids = [];
+    if (ch) [...ch.children].forEach(g => {
+      if (g.localName === 'topics' && (g.getAttribute('type') || 'attached') === 'attached')
+        [...g.children].forEach(tp => { if (tp.localName === 'topic') kids.push(xTopic(tp)); });
+    });
+    return { id: uid(), title: t ? t.textContent : '', children: kids };
+  }
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    index.clear();
+    const wrap = $('treeWrap');
+    wrap.innerHTML = sheets.map(s =>
+      '<section class="sheet"><h2>' + esc(s.title) + '</h2><ul class="tree">' + li(s.root, null, true) + '</ul></section>'
+    ).join('');
+    wrap.hidden = !sheets.length;
+    $('empty').hidden = !!sheets.length;
+    $('btnExport').disabled = $('btnExpand').disabled = $('btnCollapse').disabled = !sheets.length;
+  }
+  function li(n, parent, isRoot) {
+    index.set(n.id, { node: n, parent });
+    const has = !!n.children.length, open = has && !collapsed.has(n.id);
+    const ops = isRoot
+      ? '<button data-act="addc">＋子</button>'
+      : '<button data-act="addc">＋子</button><button data-act="adds">＋兄</button><button data-act="del" class="danger">删</button>';
+    return '<li><div class="row' + (isRoot ? ' root' : '') + '" data-id="' + n.id + '">'
+      + (has ? '<button class="tgl' + (open ? ' open' : '') + '" data-act="toggle" aria-label="展开或折叠"></button>' : '<span class="tgl ph"></span>')
+      + '<span class="label">' + esc(n.title) + '</span>'
+      + '<span class="ops">' + ops + '</span></div>'
+      + (open ? '<ul>' + n.children.map(c => li(c, n, false)).join('') + '</ul>' : '')
+      + '</li>';
+  }
+
+  /* ---------- 编辑交互（事件委托） ---------- */
+  $('treeWrap').addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) { const lb = e.target.closest('.label'); if (lb) startEdit(lb); return; }
+    const row = btn.closest('.row'), info = row && index.get(row.dataset.id);
+    if (!info) return;
+    const n = info.node;
+    switch (btn.dataset.act) {
+      case 'toggle':
+        collapsed.has(n.id) ? collapsed.delete(n.id) : collapsed.add(n.id); render(); break;
+      case 'addc':
+        n.children.push({ id: uid(), title: '新节点', children: [] });
+        collapsed.delete(n.id); render(); break;
+      case 'adds':
+        if (info.parent) {
+          const i = info.parent.children.indexOf(n);
+          info.parent.children.splice(i + 1, 0, { id: uid(), title: '新节点', children: [] });
+          render();
+        } break;
+      case 'del':
+        if (info.parent && confirm(n.children.length
+          ? '删除“' + (n.title || '（空）') + '”及其 ' + n.children.length + ' 个子节点？'
+          : '删除“' + (n.title || '（空）') + '”？')) {
+          info.parent.children.splice(info.parent.children.indexOf(n), 1); render();
+        } break;
+    }
+  });
+
+  /* 点击文字：行内编辑，Enter 确认 / Esc 取消 / 失焦确认 */
+  function startEdit(span) {
+    if (span.querySelector('input')) return;
+    const info = index.get(span.closest('.row').dataset.id); if (!info) return;
+    const input = document.createElement('input');
+    input.className = 'edit'; input.value = info.node.title;
+    span.textContent = ''; span.appendChild(input); input.focus(); input.select();
+    let done = false;
+    // 只改当前节点文字、不整树重渲染：避免 blur 重绘导致随后的点击丢失（要点两次的问题）
+    const finish = ok => { if (done) return; done = true; if (ok) info.node.title = input.value.trim(); span.textContent = info.node.title; };
+    input.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); });
+    input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('blur', () => finish(true));
+  }
+
+  /* 全部展开 / 折叠 */
+  $('btnExpand').onclick = () => { collapsed.clear(); render(); };
+  $('btnCollapse').onclick = () => {
+    const w = n => { if (n.children.length) { collapsed.add(n.id); n.children.forEach(w); } };
+    sheets.forEach(s => w(s.root)); render();
+  };
+
+  /* ---------- 导出 .xmind（Zen 格式，不破坏原文件） ---------- */
+  $('btnExport').onclick = async () => {
+    try {
+      const zip = new JSZip();
+      const content = sheets.map(s => ({ id: uid(), class: 'sheet', title: s.title, rootTopic: tJson(s.root) }));
+      zip.file('content.json', JSON.stringify(content));
+      zip.file('metadata.json', JSON.stringify({ creator: { name: 'xmind阅读', version: '1.0' } }));
+      zip.file('manifest.json', JSON.stringify({ 'file-entries': { 'content.json': {}, 'metadata.json': {} } }));
+      const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.xmind', compression: 'DEFLATE' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fileBase + '-编辑.xmind';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast('已导出：' + a.download);
+    } catch (err) { toast('导出失败：' + (err.message || err)); }
+  };
+  function tJson(n) {
+    const o = { id: n.id, class: 'topic', title: n.title };
+    if (n.children.length) o.children = { attached: n.children.map(tJson) };
+    return o;
+  }
+
+  /* ---------- 提示条 ---------- */
+  let toastTimer;
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  /* ---------- PWA：仅 http(s) 下注册 Service Worker（file:// 下自动跳过） ---------- */
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
+    addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+
+  /* iOS 添加到主屏幕需要 PNG 图标：用 canvas 现场画一个 */
+  (function () {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 180;
+      const g = c.getContext('2d');
+      g.fillStyle = '#4f6ef7'; g.fillRect(0, 0, 180, 180);
+      g.strokeStyle = '#fff'; g.lineWidth = 8; g.lineCap = 'round';
+      [[54, 54], [126, 54], [54, 126], [126, 126]].forEach(p => {
+        g.beginPath(); g.moveTo(90, 90); g.lineTo(p[0], p[1]); g.stroke();
+      });
+      g.fillStyle = '#fff';
+      [[54, 54], [126, 54], [54, 126], [126, 126]].forEach(p => { g.beginPath(); g.arc(p[0], p[1], 15, 0, 7); g.fill(); });
+      g.beginPath(); g.arc(90, 90, 24, 0, 7); g.fill();
+      const l = document.createElement('link');
+      l.rel = 'apple-touch-icon'; l.href = c.toDataURL('image/png');
+      document.head.appendChild(l);
+    } catch (e) {}
+  })();
+
+  render();
+  </script>
+</body>
+<!--
+标签作用汇总：
+- html lang：声明中文页面 | head：元信息区 | meta charset/viewport/theme-color：编码、移动视口、状态栏颜色
+- title：标签页/安装后应用名 | link manifest：PWA 应用清单 | link icon：浏览器标签图标
+- style：全部样式（吸顶顶栏、空状态、树状大纲、行内编辑、提示条）
+- body：页面主体 | header/h1/small：吸顶工具栏与标题 | button：打开/展开/折叠/导出/节点操作
+- main：主内容区 | div.empty + img：未打开文件时的引导页（图标复用本地 SVG）
+- section/h2：每个画布及其标题 | ul/li：树状大纲层级 | div.row：节点行 | span.label：节点文字（点击编辑）
+- span.ops：节点操作按钮组 | div#toast：操作反馈提示条
+- input[type=file]：隐藏的 .xmind 文件选择器 | script src jszip.min.js：本地 zip 库（离线）
+- script：主逻辑（解析 content.json/content.xml、树渲染、编辑、导出、SW 注册、iOS 图标生成）
+-->
+</html>
